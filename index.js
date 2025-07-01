@@ -1,4 +1,3 @@
-
 //firebase
 var admin = require("firebase-admin");
 
@@ -8,6 +7,7 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   databaseURL: "https://hopebot-fc36d-default-rtdb.firebaseio.com"
 });
+
 // firestore handles intents
 const db = admin.firestore();
 
@@ -17,6 +17,73 @@ const { WebhookClient } = require('dialogflow-fulfillment');
 //server modules
 const app = express();
 app.use(bodyParser.json());
+
+app.get('/webhook', (req, res) => {
+let VERIFY_TOKEN = 'hopebot_verify';
+let mode = req.query['hub.mode'];
+let token = req.query['hub.verify_token'];
+let challenge = req.query['hub.challenge'];
+if (mode && token && mode === 'subscribe' && token ===
+VERIFY_TOKEN) {
+res.status(200).send(challenge);
+} else {
+res.sendStatus(403);
+}
+});
+
+const dialogflow = require('@google-cloud/dialogflow');
+const uuid = require('uuid');
+async function detectIntent(text, sessionId) {
+const sessionClient = new dialogflow.SessionsClient({ keyFilename:
+'serviceAccountKey.json' });
+const sessionPath =
+sessionClient.projectAgentSessionPath('<PROJECT_ID>', sessionId);
+const request = {
+session: sessionPath,
+queryInput: {
+text: {
+text: text,
+languageCode: 'en',
+},
+},
+};
+const responses = await sessionClient.detectIntent(request);
+return responses[0].queryResult.fulfillmentText;
+}
+const request = require('request');
+function sendMessage(recipientId, message) {
+request({
+uri: 'https://graph.facebook.com/v12.0/me/messages',
+qs: { access_token: '<PAGE_ACCESS_TOKEN>' },
+method: 'POST',
+json: {
+recipient: { id: recipientId },
+message: { text: message },
+},
+});
+}
+
+app.post('/webhook', async (req, res) => {
+let body = req.body;
+if (body.object === 'page') {
+body.entry.forEach(async function(entry) {
+let event = entry.messaging[0];
+let sender = event.sender.id;
+if (event.message && event.message.text) {
+const text = event.message.text;
+// Send text to Dialogflow
+const dialogflowResponse = await detectIntent(text,
+sender);
+// Send back to Messenger
+sendMessage(sender, dialogflowResponse);
+}
+});
+res.status(200).send('EVENT_RECEIVED');
+} else {
+res.sendStatus(404);
+}
+});
+
 
 app.post('/webhook', (req, res) => {
     const agent = new WebhookClient({ request: req, response: res });
